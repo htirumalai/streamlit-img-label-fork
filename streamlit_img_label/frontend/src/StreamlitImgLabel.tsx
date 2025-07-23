@@ -115,11 +115,13 @@ const StreamlitImgLabel = (props: ComponentProps) => {
 
     // Remove the selected bounding box
     const removeBoxHandler = () => {
-        const selectObject = canvas.getActiveObject()
-        const selectIndex = canvas.getObjects().indexOf(selectObject)
-        canvas.remove(selectObject)
-        sendCoordinates(labels.filter((label, i) => i !== selectIndex))
-    }
+        const selectedObjects = canvas.getActiveObjects();
+        const selectedIndices = selectedObjects.map(obj => canvas.getObjects().indexOf(obj));
+        selectedObjects.forEach(obj => canvas.remove(obj));
+        const updatedLabels = labels.filter((label, index) => !selectedIndices.includes(index));
+        sendCoordinates(updatedLabels);
+        canvas.discardActiveObject().renderAll();
+    };
 
     // Reset the bounding boxes
     const resetHandler = () => {
@@ -145,14 +147,12 @@ const StreamlitImgLabel = (props: ComponentProps) => {
         sendCoordinates(labels)
     }
 
-    // Remove all the bounding boxes
     const clearHandler = () => {
         setNewBBoxIndex(0)
         canvas.getObjects().forEach((rect) => canvas.remove(rect))
         sendCoordinates([])
     }
 
-    // Send the coordinates of the rectangle back to streamlit.
     const sendCoordinates = (returnLabels: string[]) => {
         setLabels(returnLabels)
         const rects = canvas.getObjects().map((rect, i) => ({
@@ -162,23 +162,18 @@ const StreamlitImgLabel = (props: ComponentProps) => {
         Streamlit.setComponentValue({ rects })
     }
 
-    // Update the bounding boxes when modified
     useEffect(() => {
-        if (!canvas) {
-            return
-        }
+        if (!canvas) return
         const handleEvent = () => {
             canvas.renderAll()
             sendCoordinates(labels)
         }
-
         canvas.on("object:modified", handleEvent)
         return () => {
             canvas.off("object:modified")
         }
     })
 
-    // Adjust the theme according to the system
     const onSelectMode = (mode: string) => {
         setMode(mode)
         if (mode === "dark") document.body.classList.add("dark-mode")
@@ -186,60 +181,50 @@ const StreamlitImgLabel = (props: ComponentProps) => {
     }
 
     useEffect(() => {
-        // Add listener to update styles
-        window
-            .matchMedia("(prefers-color-scheme: dark)")
-            .addEventListener("change", (e) =>
-                onSelectMode(e.matches ? "dark" : "light")
-            )
-
-        // Setup dark/light mode for the first time
-        onSelectMode(
-            window.matchMedia("(prefers-color-scheme: dark)").matches
-                ? "dark"
-                : "light"
-        )
-
-        // Remove listener
-        return () => {
-            window
-                .matchMedia("(prefers-color-scheme: dark)")
-                .removeEventListener("change", () => {})
-        }
+        const media = window.matchMedia("(prefers-color-scheme: dark)")
+        const listener = (e: MediaQueryListEvent) =>
+            onSelectMode(e.matches ? "dark" : "light")
+        media.addEventListener("change", listener)
+        onSelectMode(media.matches ? "dark" : "light")
+        return () => media.removeEventListener("change", listener)
     }, [])
+
+    // Keyboard shortcuts
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            const key = e.key.toLowerCase()
+            if (key === "a") addBoxHandler()
+            else if (key === "r") removeBoxHandler()
+            else if (key === "x") resetHandler()
+            else if (key === "c") clearHandler()
+        }
+
+        window.addEventListener("keydown", handleKeyDown)
+        return () => window.removeEventListener("keydown", handleKeyDown)
+    }, [canvas, labels])
+
+    const darkClass = mode === "dark" ? styles.dark : ""
 
     return (
         <>
             <canvas
                 id="c"
-                className={mode === "dark" ? styles.dark : ""}
+                className={darkClass}
                 width={canvasWidth}
                 height={canvasHeight}
             />
-            <div className={mode === "dark" ? styles.dark : ""}>
-                <button
-                    className={mode === "dark" ? styles.dark : ""}
-                    onClick={addBoxHandler}
-                >
-                    Add bounding box
+            <div className={darkClass}>
+                <button className={darkClass} onClick={addBoxHandler}>
+                    Add bounding box (A)
                 </button>
-                <button
-                    className={mode === "dark" ? styles.dark : ""}
-                    onClick={removeBoxHandler}
-                >
-                    Remove select
+                <button className={darkClass} onClick={removeBoxHandler}>
+                    Remove selected (R)
                 </button>
-                <button
-                    className={mode === "dark" ? styles.dark : ""}
-                    onClick={resetHandler}
-                >
-                    Reset
+                <button className={darkClass} onClick={resetHandler}>
+                    Reset (X)
                 </button>
-                <button
-                    className={mode === "dark" ? styles.dark : ""}
-                    onClick={clearHandler}
-                >
-                    Clear all
+                <button className={darkClass} onClick={clearHandler}>
+                    Clear all (C)
                 </button>
             </div>
         </>

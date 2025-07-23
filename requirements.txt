@@ -1,2 +1,0 @@
-pascal_voc_writer
-streamlit
