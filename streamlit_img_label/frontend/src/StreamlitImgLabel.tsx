@@ -52,6 +52,8 @@ const StreamlitImgLabel = (props: ComponentProps) => {
       backgroundImage: dataUri,
       uniScaleTransform: true,
       selection: true,
+      preserveObjectStacking: true,
+      preserveSelectedObjects: true,
     })
 
     rects.forEach(({ top, left, width, height }) =>
@@ -235,6 +237,16 @@ const StreamlitImgLabel = (props: ComponentProps) => {
       const activeObjs = canvas.getActiveObjects()
       const indices = activeObjs.map(obj => canvas.getObjects().indexOf(obj))
       setSelectedIndices(indices)
+
+      // Prevent shift due to grouped selection
+      const sel = canvas.getActiveObject()
+      if (sel && sel.type === "activeSelection") {
+        ;(sel as fabric.ActiveSelection).toGroup()?.destroy()
+        canvas.discardActiveObject()
+        activeObjs.forEach(o => o.set({ strokeWidth: 2 }))
+        const selObj = new fabric.ActiveSelection(activeObjs, { canvas })
+        canvas.setActiveObject(selObj)
+      }
 
       canvas.getObjects().forEach(obj => {
         const index = canvas.getObjects().indexOf(obj)
