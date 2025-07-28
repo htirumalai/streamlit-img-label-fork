@@ -164,7 +164,8 @@ const StreamlitImgLabel = (props: ComponentProps) => {
         }
 
         const handleSelected = (e: fabric.IEvent) => {
-            const selected = e.selected?.[0]
+            const selectedObjects = (e as unknown as { selected: fabric.Object[] }).selected
+            const selected = selectedObjects?.[0]
             if (selected) {
                 const index = canvas.getObjects().indexOf(selected)
                 setSelectedIndex(index)
