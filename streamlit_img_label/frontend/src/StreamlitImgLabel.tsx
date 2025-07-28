@@ -26,22 +26,22 @@ interface PythonArgs {
 const StreamlitImgLabel = (props: ComponentProps) => {
     const [mode, setMode] = useState<string>("light")
     const [labels, setLabels] = useState<string[]>([])
-    const [canvas, setCanvas] = useState(new fabric.Canvas(""))
+    const [canvas, setCanvas] = useState<fabric.Canvas | null>(null)
     const [newBBoxIndex, setNewBBoxIndex] = useState<number>(0)
     const [selectedIndex, setSelectedIndex] = useState<number | null>(null)
     const [labelInput, setLabelInput] = useState<string>("")
 
     const { canvasWidth, canvasHeight, imageData }: PythonArgs = props.args
 
-    var invisCanvas = document.createElement("canvas")
-    var ctx = invisCanvas.getContext("2d")
-
+    // Generate base64 image data URI
+    const invisCanvas = document.createElement("canvas")
+    const ctx = invisCanvas.getContext("2d")
     invisCanvas.width = canvasWidth
     invisCanvas.height = canvasHeight
 
     let dataUri: any
     if (ctx) {
-        var idata = ctx.createImageData(canvasWidth, canvasHeight)
+        const idata = ctx.createImageData(canvasWidth, canvasHeight)
         idata.data.set(imageData)
         ctx.putImageData(idata, 0, 0)
         dataUri = invisCanvas.toDataURL()
@@ -49,6 +49,7 @@ const StreamlitImgLabel = (props: ComponentProps) => {
         dataUri = ""
     }
 
+    // Initialize canvas and load boxes
     useEffect(() => {
         const { rects, boxColor }: PythonArgs = props.args
         const canvasTmp = new fabric.Canvas("c", {
@@ -58,21 +59,35 @@ const StreamlitImgLabel = (props: ComponentProps) => {
         })
 
         rects.forEach((rect) => {
-            const { top, left, width, height } = rect
-            canvasTmp.add(
-                new fabric.Rect({
-                    left,
-                    top,
-                    fill: "",
-                    width,
-                    height,
-                    objectCaching: true,
-                    stroke: boxColor,
-                    strokeWidth: 1,
-                    strokeUniform: true,
-                    hasRotatingPoint: false,
-                })
-            )
+            const { top, left, width, height, label } = rect
+            const box = new fabric.Rect({
+                left,
+                top,
+                fill: "",
+                width,
+                height,
+                objectCaching: true,
+                stroke: boxColor,
+                strokeWidth: 1,
+                strokeUniform: true,
+                hasRotatingPoint: false,
+            })
+
+            const text = new fabric.Text(label, {
+                left,
+                top: top - 20,
+                fontSize: 14,
+                fill: boxColor,
+                selectable: false,
+                evented: false,
+            })
+
+            const group = new fabric.Group([box, text], {
+                selectable: true,
+                hasControls: true,
+            })
+
+            canvasTmp.add(group)
         })
 
         setLabels(rects.map((rect) => rect.label))
@@ -88,23 +103,40 @@ const StreamlitImgLabel = (props: ComponentProps) => {
     })
 
     const addBoxHandler = () => {
+        if (!canvas) return
         const box = defaultBox()
         setNewBBoxIndex(newBBoxIndex + 1)
-        canvas.add(
-            new fabric.Rect({
-                ...box,
-                fill: "",
-                objectCaching: true,
-                stroke: props.args.boxColor,
-                strokeWidth: 1,
-                strokeUniform: true,
-                hasRotatingPoint: false,
-            })
-        )
+
+        const rect = new fabric.Rect({
+            ...box,
+            fill: "",
+            objectCaching: true,
+            stroke: props.args.boxColor,
+            strokeWidth: 1,
+            strokeUniform: true,
+            hasRotatingPoint: false,
+        })
+
+        const text = new fabric.Text("", {
+            left: box.left,
+            top: box.top - 20,
+            fontSize: 14,
+            fill: props.args.boxColor,
+            selectable: false,
+            evented: false,
+        })
+
+        const group = new fabric.Group([rect, text], {
+            selectable: true,
+            hasControls: true,
+        })
+
+        canvas.add(group)
         sendCoordinates([...labels, ""])
     }
 
     const removeBoxHandler = () => {
+        if (!canvas) return
         const selectedObjects = canvas.getActiveObjects()
         const selectedIndices = selectedObjects.map(obj =>
             canvas.getObjects().indexOf(obj)
@@ -117,41 +149,62 @@ const StreamlitImgLabel = (props: ComponentProps) => {
     }
 
     const resetHandler = () => {
+        if (!canvas) return
         clearHandler()
         const { rects, boxColor }: PythonArgs = props.args
         rects.forEach((rect) => {
-            const { top, left, width, height } = rect
-            canvas.add(
-                new fabric.Rect({
-                    left,
-                    top,
-                    fill: "",
-                    width,
-                    height,
-                    objectCaching: true,
-                    stroke: boxColor,
-                    strokeWidth: 1,
-                    strokeUniform: true,
-                    hasRotatingPoint: false,
-                })
-            )
+            const { top, left, width, height, label } = rect
+            const box = new fabric.Rect({
+                left,
+                top,
+                fill: "",
+                width,
+                height,
+                objectCaching: true,
+                stroke: boxColor,
+                strokeWidth: 1,
+                strokeUniform: true,
+                hasRotatingPoint: false,
+            })
+
+            const text = new fabric.Text(label, {
+                left,
+                top: top - 20,
+                fontSize: 14,
+                fill: boxColor,
+                selectable: false,
+                evented: false,
+            })
+
+            const group = new fabric.Group([box, text], {
+                selectable: true,
+                hasControls: true,
+            })
+
+            canvas.add(group)
         })
         sendCoordinates(labels)
     }
 
     const clearHandler = () => {
+        if (!canvas) return
         setNewBBoxIndex(0)
-        canvas.getObjects().forEach((rect) => canvas.remove(rect))
+        canvas.getObjects().forEach(obj => canvas.remove(obj))
         setSelectedIndex(null)
         sendCoordinates([])
     }
 
     const sendCoordinates = (returnLabels: string[]) => {
+        if (!canvas) return
         setLabels(returnLabels)
-        const rects = canvas.getObjects().map((rect, i) => ({
-            ...rect.getBoundingRect(),
-            label: returnLabels[i],
-        }))
+        const rects = canvas.getObjects().map((group, i) => {
+            const objects = (group as fabric.Group)._objects
+            const rect = objects[0] as fabric.Rect
+            return {
+                ...rect.getBoundingRect(),
+                label: returnLabels[i],
+            }
+        })
         Streamlit.setComponentValue({ rects })
     }
 
@@ -164,7 +217,7 @@ const StreamlitImgLabel = (props: ComponentProps) => {
         }
 
         const handleSelected = (e: fabric.IEvent) => {
-            const selectedObjects = (e as unknown as { selected: fabric.Object[] }).selected
+            const selectedObjects = (e as any).selected
             const selected = selectedObjects?.[0]
             if (selected) {
                 const index = canvas.getObjects().indexOf(selected)
@@ -251,14 +304,27 @@ const StreamlitImgLabel = (props: ComponentProps) => {
                         value={labelInput}
                         onChange={(e) => setLabelInput(e.target.value)}
                         onBlur={() => {
+                            if (!canvas || selectedIndex === null) return
                             const updatedLabels = [...labels]
                             updatedLabels[selectedIndex] = labelInput
+
+                            const group = canvas.getObjects()[selectedIndex] as fabric.Group
+                            const text = group.item(1) as fabric.Text
+                            text.set("text", labelInput)
+
+                            canvas.renderAll()
                             sendCoordinates(updatedLabels)
                         }}
                         onKeyDown={(e) => {
-                            if (e.key === "Enter") {
+                            if (e.key === "Enter" && selectedIndex !== null && canvas) {
                                 const updatedLabels = [...labels]
                                 updatedLabels[selectedIndex] = labelInput
+
+                                const group = canvas.getObjects()[selectedIndex] as fabric.Group
+                                const text = group.item(1) as fabric.Text
+                                text.set("text", labelInput)
+
+                                canvas.renderAll()
                                 sendCoordinates(updatedLabels)
                             }
                         }}
