@@ -24,18 +24,17 @@ interface PythonArgs {
 }
 
 const StreamlitImgLabel = (props: ComponentProps) => {
-  /* ---------- state ---------- */
   const { canvasWidth, canvasHeight, imageData }: PythonArgs = props.args
 
-  const [mode, setMode]               = useState<"light" | "dark">("light")
-  const [labels, setLabels]           = useState<string[]>([])
-  const [canvas, setCanvas]           = useState(new fabric.Canvas(""))
+  const [mode, setMode] = useState<"light" | "dark">("light")
+  const [labels, setLabels] = useState<string[]>([])
+  const [canvas, setCanvas] = useState(new fabric.Canvas(""))
   const [newBBoxIndex, setNewBBoxIndex] = useState(0)
-  const [selectedIdx, setSelectedIdx] = useState<number | null>(null)
+  const [selectedIndices, setSelectedIndices] = useState<number[]>([])
+  const [editingIndex, setEditingIndex] = useState<number | null>(null)
 
-  /* ---------- convert raw RGBA to data‑uri ---------- */
   const invis = document.createElement("canvas")
-  invis.width  = canvasWidth
+  invis.width = canvasWidth
   invis.height = canvasHeight
   let dataUri = ""
   const ctx = invis.getContext("2d")
@@ -46,7 +45,6 @@ const StreamlitImgLabel = (props: ComponentProps) => {
     dataUri = invis.toDataURL()
   }
 
-  /* ---------- build / rebuild canvas ---------- */
   useEffect(() => {
     const { rects, boxColor }: PythonArgs = props.args
     const c = new fabric.Canvas("c", {
@@ -69,24 +67,24 @@ const StreamlitImgLabel = (props: ComponentProps) => {
           strokeUniform: true,
           objectCaching: true,
           hasRotatingPoint: false,
-        }),
-      ),
+        })
+      )
     )
 
     setLabels(rects.map(r => r.label))
     setCanvas(c)
     Streamlit.setFrameHeight()
 
-    return () => { c.dispose() }               // clean up on unmount
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => {
+      c.dispose()
+    }
   }, [canvasWidth, canvasHeight, dataUri])
 
-  /* ---------- helpers ---------- */
   const defaultBox = () => ({
-    left:   canvasWidth  * 0.15 + newBBoxIndex * 3,
-    top:    canvasHeight * 0.15 + newBBoxIndex * 3,
-    width:  canvasWidth  * 0.20,
-    height: canvasHeight * 0.20,
+    left: canvasWidth * 0.15 + newBBoxIndex * 3,
+    top: canvasHeight * 0.15 + newBBoxIndex * 3,
+    width: canvasWidth * 0.2,
+    height: canvasHeight * 0.2,
   })
 
   const sendCoordinates = (updatedLabels = labels) => {
@@ -97,7 +95,6 @@ const StreamlitImgLabel = (props: ComponentProps) => {
     Streamlit.setComponentValue({ rects })
   }
 
-  /* ---------- CRUD for boxes ---------- */
   const addBox = () => {
     const box = defaultBox()
     setNewBBoxIndex(n => n + 1)
@@ -110,7 +107,7 @@ const StreamlitImgLabel = (props: ComponentProps) => {
         strokeUniform: true,
         objectCaching: true,
         hasRotatingPoint: false,
-      }),
+      })
     )
     const updated = [...labels, ""]
     setLabels(updated)
@@ -127,7 +124,7 @@ const StreamlitImgLabel = (props: ComponentProps) => {
     const updated = labels.filter((_, i) => !indices.includes(i))
     setLabels(updated)
     sendCoordinates(updated)
-    setSelectedIdx(null)
+    setSelectedIndices([])
   }
 
   const resetBoxes = () => {
@@ -148,12 +145,12 @@ const StreamlitImgLabel = (props: ComponentProps) => {
           strokeUniform: true,
           objectCaching: true,
           hasRotatingPoint: false,
-        }),
-      ),
+        })
+      )
     )
     setLabels(rects.map(r => r.label))
     sendCoordinates(rects.map(r => r.label))
-    setSelectedIdx(null)
+    setSelectedIndices([])
   }
 
   const clearAll = () => {
@@ -161,33 +158,95 @@ const StreamlitImgLabel = (props: ComponentProps) => {
     canvas.getObjects().forEach(o => canvas.remove(o))
     setLabels([])
     sendCoordinates([])
-    setSelectedIdx(null)
+    setSelectedIndices([])
   }
 
-  /* ---------- selection & label editing ---------- */
+  let isDrawing = false
+  let rect: fabric.Rect | null = null
+  let origX = 0
+  let origY = 0
+
+  const startDraw = (o: fabric.IEvent) => {
+    if (canvas) {
+      isDrawing = true
+      const pointer = canvas.getPointer(o.e as MouseEvent)
+      origX = pointer.x
+      origY = pointer.y
+
+      rect = new fabric.Rect({
+        left: origX,
+        top: origY,
+        fill: "",
+        stroke: props.args.boxColor,
+        strokeWidth: 1,
+        strokeUniform: true,
+        hasRotatingPoint: false,
+        objectCaching: true,
+        selectable: true,
+      })
+
+      canvas.add(rect)
+      canvas.renderAll()
+    }
+  }
+
+  const continueDraw = (o: fabric.IEvent) => {
+    if (canvas && isDrawing && rect) {
+      const pointer = canvas.getPointer(o.e as MouseEvent)
+
+      if (origX > pointer.x) rect.set({ left: Math.round(pointer.x) })
+      if (origY > pointer.y) rect.set({ top: Math.round(pointer.y) })
+
+      rect.set({
+        width: Math.round(Math.abs(origX - pointer.x)),
+        height: Math.round(Math.abs(origY - pointer.y)),
+      })
+
+      canvas.renderAll()
+    }
+  }
+
+  const endDraw = () => {
+    if (canvas && rect) {
+      isDrawing = false
+      setNewBBoxIndex(newBBoxIndex + 1)
+      rect.setCoords()
+      canvas.setActiveObject(rect)
+      sendCoordinates([...labels, ""])
+      canvas.off("mouse:down", startDraw)
+      canvas.off("mouse:move", continueDraw)
+      canvas.off("mouse:up", endDraw)
+      setEditingIndex(canvas.getObjects().length - 1)
+    }
+  }
+
+  const addCustomBoxHandler = () => {
+    if (canvas) {
+      canvas.on("mouse:down", startDraw)
+      canvas.on("mouse:move", continueDraw)
+      canvas.on("mouse:up", endDraw)
+    }
+  }
+
   useEffect(() => {
     if (!canvas) return
 
     const updateSel = () => {
-      const active = canvas.getActiveObjects()[0]
-      if (active) {
-        const idx = canvas.getObjects().indexOf(active)
-        setSelectedIdx(idx)
+      const activeObjs = canvas.getActiveObjects()
+      const indices = activeObjs.map(obj => canvas.getObjects().indexOf(obj))
+      setSelectedIndices(indices)
 
-        // highlight active shape
-        active.set({ strokeWidth: 2 })
-      }
       canvas.getObjects().forEach(obj => {
-        if (obj !== canvas.getActiveObjects()[0]) obj.set({ strokeWidth: 1 })
+        const index = canvas.getObjects().indexOf(obj)
+        obj.set({ strokeWidth: indices.includes(index) ? 2 : 1 })
       })
       canvas.renderAll()
     }
 
     canvas.on("selection:created", updateSel)
     canvas.on("selection:updated", updateSel)
-    canvas.on("selection:cleared", () => setSelectedIdx(null))
+    canvas.on("selection:cleared", () => setSelectedIndices([]))
 
-    // keep XML coords in‑sync when boxes move/resize
     const onChange = () => sendCoordinates()
     canvas.on("object:modified", onChange)
 
@@ -200,28 +259,29 @@ const StreamlitImgLabel = (props: ComponentProps) => {
   }, [canvas, labels])
 
   const handleLabelChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (selectedIdx === null) return
+    if (selectedIndices.length === 0) return
     const updated = labels.slice()
-    updated[selectedIdx] = e.target.value
+    selectedIndices.forEach(i => {
+      updated[i] = e.target.value
+    })
     setLabels(updated)
     sendCoordinates(updated)
   }
 
-  /* ---------- keyboard shortcuts ---------- */
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
       switch (e.key.toLowerCase()) {
-        case "a": addBox();         break
-        case "r": removeSelected(); break
-        case "x": resetBoxes();     break
-        case "c": clearAll();       break
+        case "1": addBox(); break
+        case "2": addCustomBoxHandler(); break
+        case "3": removeSelected(); break
+        case "4": resetBoxes(); break
+        case "5": clearAll(); break
       }
     }
     window.addEventListener("keydown", down)
     return () => window.removeEventListener("keydown", down)
   })
 
-  /* ---------- dark / light ---------- */
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)")
     const listener = (e: MediaQueryListEvent) =>
@@ -233,7 +293,6 @@ const StreamlitImgLabel = (props: ComponentProps) => {
 
   const darkClass = mode === "dark" ? styles.dark : ""
 
-  /* ---------- render ---------- */
   return (
     <>
       <canvas
@@ -244,16 +303,17 @@ const StreamlitImgLabel = (props: ComponentProps) => {
       />
 
       <div className={darkClass} style={{ marginTop: "0.5rem" }}>
-        <button onClick={addBox}>Add bounding box (A)</button>
-        <button onClick={removeSelected}>Remove selected (R)</button>
-        <button onClick={resetBoxes}>Reset (X)</button>
-        <button onClick={clearAll}>Clear all (C)</button>
+        <button onClick={addBox}>Add bounding box (1)</button>
+        <button onClick={addCustomBoxHandler}>Add custom bounding box (2)</button>
+        <button onClick={removeSelected}>Remove selected (3)</button>
+        <button onClick={resetBoxes}>Reset (4)</button>
+        <button onClick={clearAll}>Clear all (5)</button>
 
-        {selectedIdx !== null && (
+        {selectedIndices.length > 0 && (
           <input
             style={{ marginLeft: "0.75rem" }}
-            placeholder="Label for selected box"
-            value={labels[selectedIdx] ?? ""}
+            placeholder="Label for selected box(es)"
+            value={labels[selectedIndices[0]] ?? ""}
             onChange={handleLabelChange}
             autoFocus
           />
