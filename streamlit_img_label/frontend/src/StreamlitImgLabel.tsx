@@ -27,34 +27,28 @@ const StreamlitImgLabel = (props: ComponentProps) => {
     const [mode, setMode] = useState<string>("light")
     const [labels, setLabels] = useState<string[]>([])
     const [canvas, setCanvas] = useState(new fabric.Canvas(""))
-    const { canvasWidth, canvasHeight, imageData }: PythonArgs = props.args
     const [newBBoxIndex, setNewBBoxIndex] = useState<number>(0)
+    const [selectedIndex, setSelectedIndex] = useState<number | null>(null)
+    const [labelInput, setLabelInput] = useState<string>("")
 
-    /*
-     * Translate Python image data to a JavaScript Image
-     */
+    const { canvasWidth, canvasHeight, imageData }: PythonArgs = props.args
+
     var invisCanvas = document.createElement("canvas")
     var ctx = invisCanvas.getContext("2d")
 
     invisCanvas.width = canvasWidth
     invisCanvas.height = canvasHeight
 
-    // create imageData object
     let dataUri: any
     if (ctx) {
         var idata = ctx.createImageData(canvasWidth, canvasHeight)
-
-        // set our buffer as source
         idata.data.set(imageData)
-
-        // update canvas with new data
         ctx.putImageData(idata, 0, 0)
         dataUri = invisCanvas.toDataURL()
     } else {
         dataUri = ""
     }
 
-    // Initialize canvas on mount and add a rectangle
     useEffect(() => {
         const { rects, boxColor }: PythonArgs = props.args
         const canvasTmp = new fabric.Canvas("c", {
@@ -80,14 +74,12 @@ const StreamlitImgLabel = (props: ComponentProps) => {
                 })
             )
         })
-        setLabels(rects.map((rect) => rect.label))
 
+        setLabels(rects.map((rect) => rect.label))
         setCanvas(canvasTmp)
         Streamlit.setFrameHeight()
-        // eslint-disable-next-line
     }, [canvasHeight, canvasWidth, dataUri])
 
-    // Create defualt bounding box
     const defaultBox = () => ({
         left: canvasWidth * 0.15 + newBBoxIndex * 3,
         top: canvasHeight * 0.15 + newBBoxIndex * 3,
@@ -95,7 +87,6 @@ const StreamlitImgLabel = (props: ComponentProps) => {
         height: canvasHeight * 0.2,
     })
 
-    // Add new bounding box to be image
     const addBoxHandler = () => {
         const box = defaultBox()
         setNewBBoxIndex(newBBoxIndex + 1)
@@ -113,17 +104,18 @@ const StreamlitImgLabel = (props: ComponentProps) => {
         sendCoordinates([...labels, ""])
     }
 
-    // Remove the selected bounding box
     const removeBoxHandler = () => {
-        const selectedObjects = canvas.getActiveObjects();
-        const selectedIndices = selectedObjects.map(obj => canvas.getObjects().indexOf(obj));
-        selectedObjects.forEach(obj => canvas.remove(obj));
-        const updatedLabels = labels.filter((label, index) => !selectedIndices.includes(index));
-        sendCoordinates(updatedLabels);
-        canvas.discardActiveObject().renderAll();
-    };
+        const selectedObjects = canvas.getActiveObjects()
+        const selectedIndices = selectedObjects.map(obj =>
+            canvas.getObjects().indexOf(obj)
+        )
+        selectedObjects.forEach(obj => canvas.remove(obj))
+        const updatedLabels = labels.filter((_, index) => !selectedIndices.includes(index))
+        sendCoordinates(updatedLabels)
+        setSelectedIndex(null)
+        canvas.discardActiveObject().renderAll()
+    }
 
-    // Reset the bounding boxes
     const resetHandler = () => {
         clearHandler()
         const { rects, boxColor }: PythonArgs = props.args
@@ -150,6 +142,7 @@ const StreamlitImgLabel = (props: ComponentProps) => {
     const clearHandler = () => {
         setNewBBoxIndex(0)
         canvas.getObjects().forEach((rect) => canvas.remove(rect))
+        setSelectedIndex(null)
         sendCoordinates([])
     }
 
@@ -164,15 +157,37 @@ const StreamlitImgLabel = (props: ComponentProps) => {
 
     useEffect(() => {
         if (!canvas) return
-        const handleEvent = () => {
+
+        const handleModified = () => {
             canvas.renderAll()
             sendCoordinates(labels)
         }
-        canvas.on("object:modified", handleEvent)
-        return () => {
-            canvas.off("object:modified")
+
+        const handleSelected = (e: fabric.IEvent) => {
+            const selected = e.selected?.[0]
+            if (selected) {
+                const index = canvas.getObjects().indexOf(selected)
+                setSelectedIndex(index)
+                setLabelInput(labels[index] || "")
+            } else {
+                setSelectedIndex(null)
+            }
         }
-    })
+
+        canvas.on("object:modified", handleModified)
+        canvas.on("selection:created", handleSelected)
+        canvas.on("selection:updated", handleSelected)
+        canvas.on("selection:cleared", () => {
+            setSelectedIndex(null)
+        })
+
+        return () => {
+            canvas.off("object:modified", handleModified)
+            canvas.off("selection:created", handleSelected)
+            canvas.off("selection:updated", handleSelected)
+            canvas.off("selection:cleared")
+        }
+    }, [canvas, labels])
 
     const onSelectMode = (mode: string) => {
         setMode(mode)
@@ -189,7 +204,6 @@ const StreamlitImgLabel = (props: ComponentProps) => {
         return () => media.removeEventListener("change", listener)
     }, [])
 
-    // Keyboard shortcuts
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
             const key = e.key.toLowerCase()
@@ -227,6 +241,29 @@ const StreamlitImgLabel = (props: ComponentProps) => {
                     Clear all (C)
                 </button>
             </div>
+
+            {selectedIndex !== null && (
+                <div className={darkClass}>
+                    <label>Label for selected box:</label>
+                    <input
+                        type="text"
+                        value={labelInput}
+                        onChange={(e) => setLabelInput(e.target.value)}
+                        onBlur={() => {
+                            const updatedLabels = [...labels]
+                            updatedLabels[selectedIndex] = labelInput
+                            sendCoordinates(updatedLabels)
+                        }}
+                        onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                                const updatedLabels = [...labels]
+                                updatedLabels[selectedIndex] = labelInput
+                                sendCoordinates(updatedLabels)
+                            }
+                        }}
+                    />
+                </div>
+            )}
         </>
     )
 }
